@@ -5,9 +5,6 @@ import plotly.express as px
 import boto3, os
 from pathlib import Path
 
-# ============================
-# Config
-# ============================
 API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000/predict")
 S3_BUCKET = os.getenv("S3_BUCKET", "housing-regression-data")
 REGION = os.getenv("AWS_REGION", "eu-west-2")
@@ -23,7 +20,6 @@ def load_from_s3(key, local_path):
         s3.download_file(S3_BUCKET, key, str(local_path))
     return str(local_path)
 
-# Paths (ensure available locally by fetching from S3 if missing)
 HOLDOUT_ENGINEERED_PATH = load_from_s3(
     "processed/feature_engineered_holdout.csv",
     "data/processed/feature_engineered_holdout.csv"
@@ -33,9 +29,6 @@ HOLDOUT_META_PATH = load_from_s3(
     "data/processed/cleaning_holdout.csv"
 )
 
-# ============================
-# Data loading
-# ============================
 @st.cache_data
 def load_data():
     fe = pd.read_csv(HOLDOUT_ENGINEERED_PATH)
@@ -58,9 +51,6 @@ def load_data():
 
 fe_df, disp_df = load_data()
 
-# ============================
-# UI
-# ============================
 st.title("🏠 Housing Price Prediction — Holdout Explorer")
 
 years = sorted(disp_df["year"].unique())
@@ -103,7 +93,6 @@ if st.button("Show Predictions 🚀"):
             if actuals is not None and len(actuals) == len(view):
                 view["actual_price"] = pd.Series(actuals, index=view.index).astype(float)
 
-            # Metrics
             mae = (view["prediction"] - view["actual_price"]).abs().mean()
             rmse = ((view["prediction"] - view["actual_price"]) ** 2).mean() ** 0.5
             avg_pct_error = ((view["prediction"] - view["actual_price"]).abs() / view["actual_price"]).mean() * 100
@@ -122,9 +111,7 @@ if st.button("Show Predictions 🚀"):
             with c3:
                 st.metric("Avg % Error", f"{avg_pct_error:.2f}%")
 
-            # ============================
-            # Yearly Trend Chart
-            # ============================
+            # Yearly trend: fetch predictions for all months in the selected year
             if region == "All":
                 yearly_data = disp_df[disp_df["year"] == year].copy()
                 idx_all = yearly_data.index
@@ -147,10 +134,7 @@ if st.button("Show Predictions 🚀"):
 
                 yearly_data["prediction"] = pd.Series(preds_region, index=yearly_data.index).astype(float)
 
-            # Aggregate by month
             monthly_avg = yearly_data.groupby("month")[["actual_price", "prediction"]].mean().reset_index()
-
-            # Highlight selected month
             monthly_avg["highlight"] = monthly_avg["month"].apply(lambda m: "Selected" if m == month else "Other")
 
             fig = px.line(
@@ -162,7 +146,6 @@ if st.button("Show Predictions 🚀"):
                 title=f"Yearly Trend — {year}{'' if region=='All' else f' — {region}'}"
             )
 
-            # Add highlight with background shading
             highlight_month = month
             fig.add_vrect(
                 x0=highlight_month - 0.5,

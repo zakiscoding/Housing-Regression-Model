@@ -104,7 +104,6 @@ def tune_model(
     best_params = study.best_trial.params
     print("✅ Best params from Optuna:", best_params)
 
-    # Retrain best model
     best_model = XGBRegressor(**{**best_params, "random_state": random_state, "n_jobs": -1, "tree_method": "hist"})
     best_model.fit(X_train, y_train)
     y_pred = best_model.predict(X_eval)
@@ -115,13 +114,11 @@ def tune_model(
     }
     print("📊 Best tuned model metrics:", best_metrics)
 
-    # Save to models/
     out = Path(model_output)
     out.parent.mkdir(parents=True, exist_ok=True)
     dump(best_model, out)
     print(f"✅ Best model saved to {out}")
 
-    # Log final best model to MLflow
     with mlflow.start_run(run_name="best_xgb_model"):
         mlflow.log_params(best_params)
         mlflow.log_metrics(best_metrics)

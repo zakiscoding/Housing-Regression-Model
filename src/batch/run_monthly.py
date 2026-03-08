@@ -1,19 +1,11 @@
 """
-Batch runner for monthly predictions.
-
-- Loads holdout data
-- Splits by year/month
-- Runs inference
-- Saves predictions per month to data/predictions/
+Batch runner: loads holdout data, groups by year/month, runs inference, and saves per-month CSVs.
 """
 
 from pathlib import Path
 import pandas as pd
 from src.inference_pipeline.inference import predict
 
-# -------------------
-# Paths
-# -------------------
 DATA_DIR = Path("data/processed")
 HOLDOUT_PATH = DATA_DIR / "cleaning_holdout.csv"
 OUTPUT_DIR = Path("data/predictions")
@@ -21,11 +13,8 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def run_monthly_predictions():
-    # Load holdout
     df = pd.read_csv(HOLDOUT_PATH)
     df["date"] = pd.to_datetime(df["date"])
-
-    # Group by year + month
     grouped = df.groupby([df["date"].dt.year, df["date"].dt.month])
 
     all_outputs = []

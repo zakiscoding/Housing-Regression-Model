@@ -1,20 +1,8 @@
 """
-⚡ Preprocessing Script for Housing Regression MLE
-
-- Reads train/eval/holdout CSVs from data/raw/.
-- Cleans and normalizes city names.
-- Maps cities to metros and merges lat/lng.
-- Drops duplicates and extreme outliers.
-- Saves cleaned splits to data/processed/.
-
-"""
-
-"""
 Preprocessing: city normalization + (optional) lat/lng merge, duplicate drop, outlier removal.
 
-- Production defaults read from data/raw/ and write to data/processed/
-- Tests can override `raw_dir`, `processed_dir`, and pass `metros_path=None`
-  to skip merge safely without touching disk assets.
+Production defaults read from data/raw/ and write to data/processed/.
+Tests can override raw_dir, processed_dir, and pass metros_path=None to skip the merge.
 """
 
 import re
@@ -58,23 +46,18 @@ def clean_and_merge(df: pd.DataFrame, metros_path: str | None = "data/raw/usmetr
         print("⚠️ Skipping city merge: no 'city_full' column present.")
         return df
 
-    # Normalize city_full
     df["city_full"] = df["city_full"].apply(normalize_city)
-    # Apply mapping
     norm_mapping = {normalize_city(k): normalize_city(v) for k, v in CITY_MAPPING.items()}
     df["city_full"] = df["city_full"].replace(norm_mapping)
 
-    # 🚨 If lat/lng already present, skip merge
     if {"lat", "lng"}.issubset(df.columns):
         print("⚠️ Skipping lat/lng merge: already present in DataFrame.")
         return df
 
-    # If no metros file provided / exists, skip merge
     if not metros_path or not Path(metros_path).exists():
         print("⚠️ Skipping lat/lng merge: metros file not provided or not found.")
         return df
 
-    # Merge lat/lng
     metros = pd.read_csv(metros_path)
     if "metro_full" not in metros.columns or not {"lat", "lng"}.issubset(metros.columns):
         print("⚠️ Skipping lat/lng merge: metros file missing required columns.")

@@ -18,20 +18,16 @@ def load_and_split_data(
     """Load raw dataset, split into train/eval/holdout by date, and save to output_dir."""
     df = pd.read_csv(raw_path)
 
-    # Ensure datetime + sort
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date")
 
-    # Cutoffs
-    cutoff_date_eval = pd.Timestamp("2020-01-01")     # eval starts
-    cutoff_date_holdout = pd.Timestamp("2022-01-01")  # holdout starts
+    cutoff_date_eval = pd.Timestamp("2020-01-01")
+    cutoff_date_holdout = pd.Timestamp("2022-01-01")
 
-    # Splits
     train_df = df[df["date"] < cutoff_date_eval]
     eval_df = df[(df["date"] >= cutoff_date_eval) & (df["date"] < cutoff_date_holdout)]
     holdout_df = df[df["date"] >= cutoff_date_holdout]
 
-    # Save
     outdir = Path(output_dir)
     outdir.mkdir(parents=True, exist_ok=True)
     train_df.to_csv(outdir / "train.csv", index=False)
