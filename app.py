@@ -6,7 +6,7 @@ import boto3, os
 from pathlib import Path
 
 API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000/predict")
-S3_BUCKET = os.getenv("S3_BUCKET", "housing-regression-data")
+S3_BUCKET = os.getenv("S3_BUCKET", "model-regression-data")
 REGION = os.getenv("AWS_REGION", "eu-west-2")
 
 s3 = boto3.client("s3", region_name=REGION)

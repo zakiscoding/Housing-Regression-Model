@@ -1,0 +1,63 @@
+{
+  "family": "housing-streamlit",
+  "containerDefinitions": [
+    {
+      "name": "housing-streamlit",
+      "image": "202197228308.dkr.ecr.us-east-2.amazonaws.com/housing-streamlit:latest",
+      "cpu": 0,
+      "portMappings": [
+        {
+          "containerPort": 8501,
+          "hostPort": 8501,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "environment": [
+        {
+          "name": "STREAMLIT_BROWSER_GATHERUSAGESTATS",
+          "value": "false"
+        },
+        {
+          "name": "STREAMLIT_SERVER_BASEURLPATH",
+          "value": "/dashboard"
+        },
+        {
+          "name": "API_URL",
+          "value": "http://housing-price-prediction-1085539611.us-east-2.elb.amazonaws.com/predict"
+        },
+        {
+          "name": "STREAMLIT_SERVER_ADDRESS",
+          "value": "0.0.0.0"
+        },
+        {
+          "name": "STREAMLIT_SERVER_PORT",
+          "value": "8501"
+        },
+        {
+          "name": "AWS_REGION",
+          "value": "us-east-2"
+        },
+        {
+          "name": "S3_BUCKET",
+          "value": "model-regression-data"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/housing-streamlit",
+          "awslogs-region": "us-east-2",
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ],
+  "taskRoleArn": "arn:aws:iam::202197228308:role/ecs_s3_access",
+  "executionRoleArn": "arn:aws:iam::202197228308:role/ecsTaskExecutionRole",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024"
+}
