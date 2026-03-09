@@ -1,0 +1,113 @@
+name: Cleanup Pipeline
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+
+      - name: Scale down ECS services
+        run: |
+          aws ecs update-service \
+            --cluster regression-model-cluster-for-project \
+            --service regression-model-cluster-for-project-service-07233mgp \
+            --desired-count 0 || true
+
+          aws ecs update-service \
+            --cluster regression-model-cluster-for-project \
+            --service housing-streamlit-service-5cvxvvhd \
+            --desired-count 0 || true
+
+      - name: Delete ECS services
+        run: |
+          aws ecs delete-service \
+            --cluster regression-model-cluster-for-project \
+            --service regression-model-cluster-for-project-service-07233mgp \
+            --force || true
+
+          aws ecs delete-service \
+            --cluster regression-model-cluster-for-project \
+            --service housing-streamlit-service-5cvxvvhd \
+            --force || true
+
+      - name: Delete ALB
+        run: |
+          ALB_ARN=$(aws elbv2 describe-load-balancers \
+            --query 'LoadBalancers[?contains(LoadBalancerName, `housing`)].LoadBalancerArn' \
+            --output text)
+
+          if [ -n "$ALB_ARN" ]; then
+            aws elbv2 delete-load-balancer --load-balancer-arn "$ALB_ARN"
+            echo "ALB deleted: $ALB_ARN"
+            sleep 10
+          else
+            echo "No ALB found, skipping"
+          fi
+
+      - name: Delete target groups
+        run: |
+          TG_ARNS=$(aws elbv2 describe-target-groups \
+            --query 'TargetGroups[?contains(TargetGroupName, `regression`)].TargetGroupArn' \
+            --output text)
+
+          for ARN in $TG_ARNS; do
+            aws elbv2 delete-target-group --target-group-arn "$ARN" || true
+            echo "Deleted target group: $ARN"
+          done
+
+      - name: Delete ECS cluster
+        run: |
+          aws ecs delete-cluster \
+            --cluster regression-model-cluster-for-project || true
+
+      - name: Delete ECR repositories
+        run: |
+          for REPO in housing-api housing-streamlit; do
+            aws ecr delete-repository \
+              --repository-name "$REPO" \
+              --force || true
+            echo "Deleted ECR repo: $REPO"
+          done
+
+      - name: Delete CloudWatch log groups
+        run: |
+          LOG_GROUPS=$(aws logs describe-log-groups \
+            --query 'logGroups[?contains(logGroupName, `ecs`) || contains(logGroupName, `housing`)].logGroupName' \
+            --output text)
+
+          for LG in $LOG_GROUPS; do
+            aws logs delete-log-group --log-group-name "$LG" || true
+            echo "Deleted log group: $LG"
+          done
+
+      - name: Empty and delete S3 bucket
+        run: |
+          BUCKET="model-regression-data"
+
+          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            aws s3 rm s3://$BUCKET --recursive
+            aws s3api delete-bucket --bucket "$BUCKET"
+            echo "S3 bucket $BUCKET deleted"
+          else
+            echo "Bucket $BUCKET not found, skipping"
+          fi
+
+      - name: Summary
+        run: |
+          echo "Cleanup complete. Resources deleted:"
+          echo "  - ECS services (API + Streamlit)"
+          echo "  - ECS cluster"
+          echo "  - ALB + listeners + rules"
+          echo "  - Target groups"
+          echo "  - ECR repositories + images"
+          echo "  - CloudWatch log groups"
+          echo "  - S3 bucket + all objects"
