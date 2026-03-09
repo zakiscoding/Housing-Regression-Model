@@ -330,7 +330,9 @@ An internet-facing ALB (`housing-price-prediction`) routes incoming traffic acro
 **Difficulties with AWS setup:**
 - Setting up the ECS task definitions to inject AWS credentials as environment variables (so the containers can access S3) without hardcoding them took several iterations through IAM roles and task execution policies.
 - The ALB target group health checks initially failed because the FastAPI startup takes a few seconds to download the model from S3. I had to increase the health check grace period so ECS didn't kill the task before it was ready.
+<img width="1214" height="788" alt="Screenshot 2026-03-09 at 12 07 17 AM" src="https://github.com/user-attachments/assets/f5e9e730-d240-4187-9ddd-b61dc9e0f6f7" />
 
+<img width="1180" height="742" alt="Screenshot 2026-03-09 at 12 07 30 AM" src="https://github.com/user-attachments/assets/02a06f1f-8279-4b67-b3a7-6c85603bc193" />
 ---
 
 ## Tech Stack
