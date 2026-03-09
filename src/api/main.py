@@ -8,8 +8,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 import pandas as pd
 import boto3, os
-
-from src.inference_pipeline.inference import predict
+from joblib import load
 
 S3_BUCKET = os.getenv("S3_BUCKET", "model-regression-data")
 REGION = os.getenv("AWS_REGION", "us-east-2")
@@ -27,13 +26,10 @@ def load_from_s3(key, local_path):
 
 
 MODEL_PATH = Path(load_from_s3("models/xgb_best_model.pkl", "models/xgb_best_model.pkl"))
-TRAIN_FE_PATH = Path(load_from_s3("processed/feature_engineered_train.csv", "data/processed/feature_engineered_train.csv"))
 
-if TRAIN_FE_PATH.exists():
-    _train_cols = pd.read_csv(TRAIN_FE_PATH, nrows=1)
-    TRAIN_FEATURE_COLUMNS = [c for c in _train_cols.columns if c != "price"]
-else:
-    TRAIN_FEATURE_COLUMNS = None
+# Load model once at startup and derive expected features from booster
+_model = load(MODEL_PATH)
+FEATURE_NAMES = _model.get_booster().feature_names
 
 app = FastAPI(title="Housing Regression API")
 
@@ -45,32 +41,30 @@ def root():
 
 @app.get("/health")
 def health():
-    status: Dict[str, Any] = {"model_path": str(MODEL_PATH)}
+    status: Dict[str, Any] = {"model_path": str(MODEL_PATH), "status": "healthy"}
     if not MODEL_PATH.exists():
         status["status"] = "unhealthy"
         status["error"] = "Model not found"
     else:
-        status["status"] = "healthy"
-        if TRAIN_FEATURE_COLUMNS:
-            status["n_features_expected"] = len(TRAIN_FEATURE_COLUMNS)
+        status["n_features_expected"] = len(FEATURE_NAMES) if FEATURE_NAMES else 0
     return status
 
 
 @app.post("/predict")
 def predict_batch(data: List[dict]):
-    if not MODEL_PATH.exists():
-        return {"error": f"Model not found at {str(MODEL_PATH)}"}
-
     df = pd.DataFrame(data)
     if df.empty:
         return {"error": "No data provided"}
 
-    preds_df = predict(df, model_path=MODEL_PATH)
+    y_true = df.pop("price").tolist() if "price" in df.columns else None
 
-    resp = {"predictions": preds_df["predicted_price"].astype(float).tolist()}
-    if "actual_price" in preds_df.columns:
-        resp["actuals"] = preds_df["actual_price"].astype(float).tolist()
+    # Align to exact features the model was trained on
+    df = df.reindex(columns=FEATURE_NAMES, fill_value=0)
 
+    preds = _model.predict(df).tolist()
+    resp = {"predictions": preds}
+    if y_true is not None:
+        resp["actuals"] = y_true
     return resp
 
 
