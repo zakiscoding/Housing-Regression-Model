@@ -223,24 +223,25 @@ Once I was happy with the model in notebooks, I rewrote everything as proper Pyt
 
 With the code modularized, I built a REST API to serve predictions and a dashboard to explore them.
 
-**FastAPI** (`src/api/main.py`) — on startup it downloads the model and training features from S3 if not already cached locally.
+**FastAPI** (`src/api/main.py`) — on startup it downloads the model from S3 if not already cached locally, loads it into memory, and reads the expected feature names directly from the XGBoost booster. All subsequent requests use the in-memory model with no I/O.
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/` | Health check |
-| `GET` | `/health` | Model status |
+|--------|----------|--------------|
+| `GET` | `/` | Root check |
+| `GET` | `/health` | Model status + feature count |
 | `POST` | `/predict` | Batch prediction — list of records → predicted prices |
 | `POST` | `/run_batch` | Trigger monthly batch inference |
 | `GET` | `/latest_predictions` | Retrieve latest prediction file |
 
-<img width="726" height="88" alt="Screenshot 2026-03-08 at 8 55 21 PM" src="https://github.com/user-attachments/assets/2fb2dd3c-7614-4521-a7bf-f4165b8d5fc4" />
+<img width="726" height="88" alt="Screenshot 2026-03-08 at 8 55 21 PM" src="https://github.com/user-attachments/assets/2fb2dd3c-7614-4521-a7bf-f4165b8d5fc4" />
 
 
-**Streamlit** (`app.py`) pulls holdout data from S3, calls the FastAPI `/predict` endpoint, and displays predictions vs actuals with MAE, RMSE, and % error metrics. Users can filter by year, month, and region.
+**Streamlit** (`app.py`) pulls holdout data from S3 on startup, calls the FastAPI `/predict` endpoint, and displays predictions vs actuals with MAE, RMSE, and % error metrics. Users filter by year, month, and region.
 
 **Difficulties:**
-- The API needed to be stateless but also fast — loading a model from S3 on every request would be too slow. I added local caching so the model is downloaded once on startup and reused for all subsequent requests.
-- Getting the Streamlit app to talk to the FastAPI service across Docker containers required configuring the `API_URL` environment variable properly — localhost doesn't work when services are in separate containers.
+- The API originally passed already-feature-engineered data through the raw-data preprocessing pipeline (`clean_and_merge`, `drop_duplicates`, `remove_outliers`). This caused silent row drops: `drop_duplicates` excluded `year` from the dedup subset, so valid holdout rows with identical features across different years were both removed. Fixed by bypassing preprocessing in `/predict` entirely — the data from Streamlit is already engineered, so the endpoint now just `reindex`es to model feature names and predicts.
+- A subtle import ordering bug: `inference.py` loaded `TRAIN_FEATURE_COLUMNS` from disk at module import time, but `main.py` only downloaded that file from S3 after the import completed. So `TRAIN_FEATURE_COLUMNS` was always `None` at runtime, schema alignment was silently skipped, and the model received wrong-shaped input. Fixed by reading feature names directly from the booster at startup (`model.get_booster().feature_names`), which needs no external file.
+- Getting Streamlit to call the API across containers required setting `API_URL` as an environment variable — localhost doesn't route between separate ECS tasks.
 
 ---
 
@@ -248,13 +249,15 @@ With the code modularized, I built a REST API to serve predictions and a dashboa
 
 Before deployment, I pushed everything the deployed services would need up to S3.
 
-**What I uploaded:**
-- `models/xgb_best_model.pkl` → `model-regression-data` bucket
-- `processed/feature_engineered_train.csv` → used by the API for schema alignment
-- `processed/feature_engineered_holdout.csv` → used by the Streamlit dashboard
+**What I uploaded to `model-regression-data` (us-east-2):**
+- `models/xgb_best_model.pkl` — tuned production model
+- `processed/feature_engineered_train.csv` — used by the API for schema alignment
+- `processed/feature_engineered_holdout.csv` — used by the Streamlit dashboard
+- `processed/cleaning_holdout.csv` — raw cleaned holdout (source for regenerating features)
 
 **Difficulties:**
-- The FastAPI and Streamlit services use different S3 buckets and different AWS regions in the current setup (`us-east-2` vs `eu-west-2`). This was something I'd unify in a cleaner version but worked for the scope of this project.
+- The `feature_engineered_holdout.csv` was generated at a point in the project when `lat` and `lng` were not being preserved through the feature engineering pipeline. The model was trained with them, so the deployed API would crash on every prediction request. I had to regenerate the holdout from `cleaning_holdout.csv` (which retained lat/lng from the geo merge step) using the saved encoders, then re-upload it to S3.
+- The feature engineering code had a naming inconsistency: it was creating a `city_full_encoded` column during training but the model's booster stored the feature as `city_encoded`. The holdout regeneration had to produce the column name the model actually expected.
 
 ---
 
@@ -322,17 +325,79 @@ Two services running in the same cluster, both Active:
 <img width="1526" height="1756" alt="Screenshot 2026-03-08 at 8 56 18 PM" src="https://github.com/user-attachments/assets/3746af61-db7f-429e-a39e-c6a2dd0a7140" />
 
 ### Application Load Balancer
-An internet-facing ALB (`housing-price-prediction`) routes incoming traffic across two availability zones (us-east-2a, us-east-2b) to the ECS tasks.
+An internet-facing ALB (`housing-price-prediction`) routes incoming traffic across two availability zones (us-east-2a, us-east-2b) using path-based routing rules:
+
+| Rule | Target Group | Service |
+|------|-------------|--------|
+| `/predict`, `/predict/*` | `regression-project-api` (port 8000) | FastAPI |
+| Default (all other paths) | `regression-project-streamlit` (port 8501) | Streamlit |
 
 
-<img width="1612" height="1530" alt="Screenshot 2026-03-08 at 8 56 44 PM" src="https://github.com/user-attachments/assets/07797732-a8b7-4dea-b41b-440e0edcefff" />
+<img width="1612" height="1530" alt="Screenshot 2026-03-08 at 8 56 44 PM" src="https://github.com/user-attachments/assets/07797732-a8b7-4dea-b41b-440e0edcefff" />
 
 **Difficulties with AWS setup:**
-- Setting up the ECS task definitions to inject AWS credentials as environment variables (so the containers can access S3) without hardcoding them took several iterations through IAM roles and task execution policies.
-- The ALB target group health checks initially failed because the FastAPI startup takes a few seconds to download the model from S3. I had to increase the health check grace period so ECS didn't kill the task before it was ready.
-<img width="1214" height="788" alt="Screenshot 2026-03-09 at 12 07 17 AM" src="https://github.com/user-attachments/assets/f5e9e730-d240-4187-9ddd-b61dc9e0f6f7" />
+- The ALB was initially created with only a single default rule forwarding everything to Streamlit. There was no target group for the API at all — it was reachable within the VPC but completely invisible to the outside world. The API target group and path-based routing rule had to be added after the fact.
+- Setting up ECS task definitions to use IAM task roles (rather than hardcoded credentials) for S3 access took several iterations through `ecsTaskExecutionRole` vs `taskRoleArn` — these are different roles with different purposes and it's easy to mix them up.
+- The health check for the Streamlit target group (`/dashboard/_stcore/health`) only becomes reachable once Streamlit finishes its startup sequence, which includes downloading files from S3. ECS was killing the task as unhealthy before the app was ready.
+<img width="1214" height="788" alt="Screenshot 2026-03-09 at 12 07 17 AM" src="https://github.com/user-attachments/assets/f5e9e730-d240-4187-9ddd-b61dc9e0f6f7" />
 
-<img width="1180" height="742" alt="Screenshot 2026-03-09 at 12 07 30 AM" src="https://github.com/user-attachments/assets/02a06f1f-8279-4b67-b3a7-6c85603bc193" />
+<img width="1180" height="742" alt="Screenshot 2026-03-09 at 12 07 30 AM" src="https://github.com/user-attachments/assets/02a06f1f-8279-4b67-b3a7-6c85603bc193" />
+
+---
+
+## Deployment Issues & Fixes
+
+This section documents the real problems encountered getting the system running end-to-end on AWS. These weren't theoretical edge cases — every one of these caused the service to be completely down.
+
+### 1. ECS Tasks Refusing to Start (503 on ALB)
+Both services had 0 running tasks from the moment they were deployed, making the site return 503 immediately.
+
+**API service:** The task definition referenced a CloudWatch log group (`/ecs/housing-api-task-ecs`) that didn't exist, and had no `awslogs-create-group` flag. ECS refused to start the task at all rather than failing gracefully.
+
+**Streamlit service:** The task definition did have `awslogs-create-group: true`, but `ecsTaskExecutionRole` was missing the `logs:CreateLogGroup` IAM permission. Same result — task refused to start.
+
+**Fix:** Created both log groups manually and added a `CloudWatchLogsCreateLogGroup` inline policy to `ecsTaskExecutionRole`.
+
+---
+
+### 2. 504 Gateway Timeout (ALB Couldn't Reach Container)
+After the tasks started, the ALB returned 504 on every request. The target was registered but health checks were timing out.
+
+**Cause:** The ECS task security group only allowed inbound traffic on port 80. Streamlit runs on port 8501. The ALB couldn't reach the container because there was no inbound rule for 8501.
+
+**Fix:** Added an inbound rule for TCP 8501 to `sg-03249030d2d81ad03`.
+
+---
+
+### 3. 403 Forbidden on S3 (Wrong Bucket Name)
+Once the Streamlit container started, it immediately crashed trying to download the holdout CSV from S3.
+
+**Cause:** `app.py` had `S3_BUCKET = "housing-regression-data"` hardcoded as the default — a bucket that doesn't exist. The actual bucket is `model-regression-data`. Additionally, the app defaulted `AWS_REGION` to `eu-west-2` while the bucket is in `us-east-2`. With SigV4 signing, a region mismatch causes a 403 rather than a redirect.
+
+**Fix:** Corrected the default bucket name in `app.py`, added `AWS_REGION=us-east-2` and `S3_BUCKET=model-regression-data` as explicit environment variables in the ECS task definition.
+
+---
+
+### 4. 404 on /predict (No ALB Rule for API)
+The Streamlit app loaded successfully and could be reached, but every prediction request returned 404.
+
+**Cause:** The ALB only had a single default rule forwarding all traffic to the Streamlit target group. There was no routing rule for `/predict` and no target group for the API service. The API container was running but completely unreachable through the load balancer.
+
+**Fix:** Created a new target group (`regression-project-api`, port 8000), added an ALB listener rule to forward `/predict` and `/predict/*` to it, opened port 8000 on the security group, and registered the API task's IP. Also attached the target group to the ECS service for automatic re-registration on task replacement.
+
+---
+
+### 5. 500 Internal Server Error (Feature Mismatch)
+With routing fixed, predictions returned 500. The API was receiving requests but crashing before producing output.
+
+**Root cause 1 — Missing features in holdout CSV:** The `feature_engineered_holdout.csv` in S3 was missing `lat` and `lng` columns. The model was trained with them and the booster enforced their presence. The file had been generated at a point in the project when those columns were being dropped before save. The `cleaning_holdout.csv` retained them but the feature engineering output didn't.
+
+**Root cause 2 — Import ordering bug:** `inference.py` loaded `TRAIN_FEATURE_COLUMNS` from `feature_engineered_train.csv` at module import time. But in `main.py`, the S3 download of that file happened after the import. So `TRAIN_FEATURE_COLUMNS` was always `None` at runtime, the `reindex` schema alignment step was silently skipped, and the model received a dataframe with wrong columns on every single request.
+
+**Root cause 3 — Preprocessing pipeline mismatch:** The `/predict` endpoint piped already-feature-engineered data through a preprocessing function designed for raw input. `drop_duplicates` excluded `year` from the dedup key, causing rows that shared the same feature values across different years to be treated as duplicates and removed from the batch.
+
+**Fix:** Regenerated `feature_engineered_holdout.csv` from `cleaning_holdout.csv` using the saved encoders, preserving `lat`/`lng` and using `city_encoded` to match the trained model's feature names. Re-uploaded to S3. Rewrote the `/predict` endpoint to load the model once at startup, derive feature names from `model.get_booster().feature_names`, and do only `reindex(fill_value=0)` before predicting — no preprocessing pipeline involved.
+
 ---
 
 ## Tech Stack
