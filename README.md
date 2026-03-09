@@ -197,9 +197,10 @@ With XGBoost confirmed as the right model class, I ran a proper hyperparameter s
 **Difficulties:**
 - Getting MLflow and Optuna to integrate cleanly took some work. Optuna runs trials in its own loop and MLflow needs a run context — I had to nest the MLflow run inside each Optuna trial callback carefully so experiments didn't bleed into each other.
 - 15 trials felt like a reasonable tradeoff between search quality and time, but with a larger search space some trials landed in clearly bad regions. Pruning would have helped here.
+<img width="2150" height="2122" alt="Screenshot 2026-03-08 at 4 23 03 PM" src="https://github.com/user-attachments/assets/9ecdf447-7158-4e74-9eed-e8c659aff8fe" />
 
-![MLflow Experiment — xgboost_optuna_housing](assets/screenshots/mlflow_runs.png)
-![MLflow Runs — 32 total across sessions](assets/screenshots/mlflow_runs_2.png)
+<img width="2114" height="2160" alt="Screenshot 2026-03-08 at 4 22 42 PM" src="https://github.com/user-attachments/assets/d25fd238-6e4f-42ca-9334-33cb977725a1" />
+
 
 ---
 
@@ -232,7 +233,8 @@ With the code modularized, I built a REST API to serve predictions and a dashboa
 | `POST` | `/run_batch` | Trigger monthly batch inference |
 | `GET` | `/latest_predictions` | Retrieve latest prediction file |
 
-![FastAPI health check — API live on AWS](assets/screenshots/fastapi_health.png)
+<img width="726" height="88" alt="Screenshot 2026-03-08 at 8 55 21 PM" src="https://github.com/user-attachments/assets/2fb2dd3c-7614-4521-a7bf-f4165b8d5fc4" />
+
 
 **Streamlit** (`app.py`) pulls holdout data from S3, calls the FastAPI `/predict` endpoint, and displays predictions vs actuals with MAE, RMSE, and % error metrics. Users can filter by year, month, and region.
 
@@ -282,7 +284,8 @@ I set up a fully automated deployment pipeline so every push to `main` builds, p
 
 AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) are stored as GitHub secrets.
 
-![GitHub Actions — CI/CD workflow runs](assets/screenshots/github_actions.png)
+<img width="1708" height="734" alt="Screenshot 2026-03-08 at 8 55 12 PM" src="https://github.com/user-attachments/assets/350dd7e3-7bf1-4193-867a-eb4ce7610d27" />
+
 
 **Difficulties:**
 - The first few pipeline runs failed because of IAM permission issues. The GitHub Actions role didn't have the right policies to push to ECR or update ECS services. I had to create and attach the correct IAM policies, which required understanding the AWS permission model for cross-service access.
@@ -298,12 +301,15 @@ Two buckets store everything the deployed services need at runtime, so container
 ### ECR — Container Registry
 Both Docker images live in ECR and are tagged per-commit for rollback capability.
 
-![AWS ECR — housing-api and housing-streamlit repositories](assets/screenshots/aws_ecr.png)
+<img width="1460" height="606" alt="Screenshot 2026-03-08 at 8 55 58 PM" src="https://github.com/user-attachments/assets/90180e6d-5f4a-4dfa-8008-3fce743ed54a" />
+
+
 
 ### IAM Roles
 I created custom roles to give ECS tasks the minimum permissions needed to read from S3:
 
-![AWS IAM Roles — ecs_s3_access, ecsTaskExecutionRole, s3-access-role](assets/screenshots/aws_iam_roles.png)
+<img width="1576" height="860" alt="Screenshot 2026-03-08 at 8 55 37 PM" src="https://github.com/user-attachments/assets/716b4cc1-3a03-4c70-bc03-9cd938ef82bc" />
+
 
 ### ECS Cluster — `regression-model-cluster-for-project`
 Two services running in the same cluster, both Active:
@@ -313,12 +319,13 @@ Two services running in the same cluster, both Active:
 | `regression-model-cluster-for-project-service-07233mgp` | FastAPI prediction API |
 | `housing-streamlit-service-5cvxvvhd` | Streamlit dashboard |
 
-![AWS ECS Cluster — 2 active services](assets/screenshots/aws_ecs_cluster.png)
+<img width="1526" height="1756" alt="Screenshot 2026-03-08 at 8 56 18 PM" src="https://github.com/user-attachments/assets/3746af61-db7f-429e-a39e-c6a2dd0a7140" />
 
 ### Application Load Balancer
 An internet-facing ALB (`housing-price-prediction`) routes incoming traffic across two availability zones (us-east-2a, us-east-2b) to the ECS tasks.
 
-![AWS ALB — housing-price-prediction load balancer](assets/screenshots/aws_alb.png)
+
+<img width="1612" height="1530" alt="Screenshot 2026-03-08 at 8 56 44 PM" src="https://github.com/user-attachments/assets/07797732-a8b7-4dea-b41b-440e0edcefff" />
 
 **Difficulties with AWS setup:**
 - Setting up the ECS task definitions to inject AWS credentials as environment variables (so the containers can access S3) without hardcoding them took several iterations through IAM roles and task execution policies.
